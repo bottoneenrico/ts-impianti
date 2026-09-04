@@ -13,42 +13,85 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# --- CONFIGURAZIONE STILE CSS (Tema Scuro Blu Tecnico) ---
+# --- CONFIGURAZIONE STILE CSS (Tema Modern Dark Glassmorphism) ---
 st.markdown("""
     <style>
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
+
     .stApp {
-        background-color: #0B1120;
-        color: #F8FAFC;
-        font-family: 'IBM Plex Sans', sans-serif;
+        background: radial-gradient(circle at 10% 20%, #0f172a 0%, #020617 90%);
+        color: #f1f5f9;
+        font-family: 'Inter', sans-serif;
     }
+    
+    /* Stile Card Moderno */
     .card {
-        background-color: #111B2E;
-        padding: 20px;
-        border-radius: 12px;
-        border: 1px solid #1E293B;
-        margin-bottom: 15px;
+        background: rgba(30, 41, 59, 0.7);
+        backdrop-filter: blur(12px);
+        -webkit-backdrop-filter: blur(12px);
+        padding: 24px;
+        border-radius: 16px;
+        border: 1px solid rgba(255, 255, 255, 0.08);
+        box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.3);
+        margin-bottom: 20px;
+        transition: transform 0.2s ease, border-color 0.2s ease;
     }
+    .card:hover {
+        border-color: rgba(56, 189, 248, 0.3);
+    }
+
+    /* Bottoni moderni */
     .stButton>button {
-        background-color: #2563EB;
+        background: linear-gradient(135deg, #2563eb 0%, #1d4ed8 100%);
         color: white;
-        border-radius: 8px;
-        font-weight: bold;
+        border-radius: 10px;
+        font-weight: 600;
         border: none;
-        padding: 10px 20px;
+        padding: 10px 24px;
+        box-shadow: 0 4px 12px rgba(37, 99, 235, 0.3);
+        transition: all 0.2s ease;
     }
     .stButton>button:hover {
-        background-color: #1D4ED8;
+        background: linear-gradient(135deg, #1d4ed8 0%, #1e40af 100%);
+        box-shadow: 0 6px 16px rgba(37, 99, 235, 0.5);
+        transform: translateY(-1px);
     }
+
+    /* Input e form puliti */
+    .stTextInput>div>div>input, .stSelectbox>div>div>select, .stTextArea>div>div>textarea {
+        background-color: rgba(15, 23, 42, 0.6) !important;
+        border: 1px solid rgba(255, 255, 255, 0.1) !important;
+        color: #f1f5f9 !important;
+        border-radius: 10px !important;
+    }
+    .stTextInput>div>div>input:focus, .stSelectbox>div>div>select:focus {
+        border-color: #38bdf8 !important;
+        box-shadow: 0 0 0 2px rgba(56, 189, 248, 0.2) !important;
+    }
+
+    /* Tipografia */
     h1, h2, h3 {
-        font-family: 'Manrope', sans-serif;
-        color: #38BDF8;
+        font-family: 'Inter', sans-serif;
+        font-weight: 700;
+        letter-spacing: -0.025em;
+        color: #f8fafc;
+    }
+    h1 {
+        background: linear-gradient(135deg, #38bdf8 0%, #818cf8 100%);
+        -webkit-background-clip: text;
+        -webkit-text-fill-color: transparent;
+    }
+    
+    /* Sidebar personalizzata */
+    [data-testid="stSidebar"] {
+        background-color: #0b0f19;
+        border-right: 1px solid rgba(255, 255, 255, 0.05);
     }
     </style>
 """, unsafe_allow_html=True)
 
 # --- GESTIONE DATI IN SESSIONE (Database temporaneo in memoria per test) ---
 if "users" not in st.session_state:
-    # Admin iniziale predefinito (PIN cifrato con SHA256 per sicurezza)
     admin_pin_hash = hashlib.sha256("2231eb".encode()).hexdigest()
     st.session_state.users = {
         "ADMIN": {"name": "Salvatore Tammaro", "pin": admin_pin_hash, "role": "amministratore"}
@@ -107,7 +150,6 @@ def generate_pdf(report, client):
     c.drawString(50, height - 215, "DESCRIZIONE DEI LAVORI ESEGUITI:")
     c.setFont("Helvetica", 10)
     
-    # Testo multilinea descrittivo
     text_object = c.beginText(50, height - 235)
     text_object.setFont("Helvetica", 10)
     for line in report['description'].split('\n'):
@@ -142,11 +184,12 @@ def generate_pdf(report, client):
 
 # --- SISTEMA DI LOGIN ---
 if not st.session_state.logged_user:
-    st.markdown("<h2 style='text-align: center;'>⚡ TS IMPIANTI - ACCESSO RISERVATO</h2>", unsafe_allow_html=True)
-    col1, col2, col3 = st.columns([1, 2, 1])
+    st.markdown("<h2 style='text-align: center; margin-bottom: 30px;'>⚡ TS IMPIANTI</h2>", unsafe_allow_html=True)
+    col1, col2, col3 = st.columns([1, 1.2, 1])
     
     with col2:
         st.markdown("<div class='card'>", unsafe_allow_html=True)
+        st.markdown("<h4 style='text-align: center; margin-bottom: 20px;'>Accesso Riservato</h4>", unsafe_allow_html=True)
         username_input = st.text_input("Nome Utente").upper()
         pin_input = st.text_input("PIN Personale", type="password")
         
@@ -160,20 +203,18 @@ if not st.session_state.logged_user:
                     "name": user_data["name"],
                     "role": user_data["role"]
                 }
-                # RIGA CORRETTA QUI SOTTO
                 st.success(f"Accesso riuscito! Benvenuto, {user_data['name']}")
                 st.rerun()
             else:
                 st.error("Nome utente o PIN errati.")
         st.markdown("</div>", unsafe_allow_html=True)
-        st.info("💡 **Accesso Amministratore Predefinito:** Utente: `ADMIN` | PIN: `2231eb`")
     st.stop()
 
 
 # --- BARRA DI NAVIGAZIONE E MENU PRINCIPALE ---
 user = st.session_state.logged_user
-st.sidebar.markdown(f"### 👤 {user['name']}")
-st.sidebar.markdown(f"Ruolo: **{user['role'].upper()}**")
+st.sidebar.markdown(f"### ⚡ TS IMPIANTI")
+st.sidebar.markdown(f"👤 **{user['name']}**\n\nRuolo: `{user['role'].upper()}`")
 st.sidebar.markdown("---")
 
 menu_options = ["Archivio Clienti", "Nuovo Rapportino", "Riepilogo Mensile"]
@@ -182,7 +223,8 @@ if user["role"] == "amministratore":
 
 selected_page = st.sidebar.radio("Navigazione", menu_options)
 
-if st.sidebar.button("🚪 Disconnetti"):
+st.sidebar.markdown("---")
+if st.sidebar.button("🚪 Disconnetti", use_container_width=True):
     st.session_state.logged_user = None
     st.rerun()
 
@@ -192,6 +234,7 @@ if st.sidebar.button("🚪 Disconnetti"):
 # ==========================================
 if selected_page == "Archivio Clienti":
     st.title("📁 Archivio Clienti & Commesse")
+    st.write("Gestisci l'anagrafica dei clienti e le relative schede d'intervento.")
     
     # Sezione Creazione Nuovo Cliente
     with st.expander("➕ Aggiungi Nuovo Cliente / Cartella"):
@@ -226,19 +269,16 @@ if selected_page == "Archivio Clienti":
                 with st.container():
                     st.markdown(f"""
                         <div class='card'>
-                            <h3>🏢 {client['name']}</h3>
-                            <p><b>Commessa/Gruppo:</b> {client['group'] or 'N/D'} | <b>Indirizzo:</b> {client['address'] or 'N/D'} | <b>Tel:</b> {client['phone'] or 'N/D'}</p>
+                            <h3 style='margin-bottom: 10px;'>🏢 {client['name']}</h3>
+                            <p style='color: #94a3b8; margin: 0;'><b>Commessa/Gruppo:</b> {client['group'] or 'N/D'} &nbsp;|&nbsp; <b>Indirizzo:</b> {client['address'] or 'N/D'} &nbsp;|&nbsp; <b>Tel:</b> {client['phone'] or 'N/D'}</p>
                         </div>
                     """, unsafe_allow_html=True)
                     
-                    # Pulsanti azione per singolo cliente
-                    col_a, col_b = st.columns([1, 5])
-                    with col_a:
-                        if user["role"] == "amministratore":
-                            if st.button(f"🗑️ Elimina", key=f"del_{client['id']}"):
-                                st.session_state.clients = [c for c in st.session_state.clients if c["id"] != client["id"]]
-                                st.warning("Cartella eliminata.")
-                                st.rerun()
+                    if user["role"] == "amministratore":
+                        if st.button(f"🗑️ Elimina Cartella", key=f"del_{client['id']}"):
+                            st.session_state.clients = [c for c in st.session_state.clients if c["id"] != client["id"]]
+                            st.warning("Cartella eliminata.")
+                            st.rerun()
 
 
 # ==========================================
@@ -277,7 +317,6 @@ elif selected_page == "Nuovo Rapportino":
             submit_report = st.form_submit_button("Genera Rapportino e Salva")
             
             if submit_report:
-                # Trova oggetto cliente associato
                 client_obj = next((c for c in st.session_state.clients if c["name"] == selected_client_name), None)
                 
                 new_rep = {
@@ -294,7 +333,6 @@ elif selected_page == "Nuovo Rapportino":
                 st.session_state.reports.append(new_rep)
                 st.success("Rapportino salvato con successo!")
                 
-                # Generazione PDF immediata
                 pdf_file = generate_pdf(new_rep, client_obj)
                 with open(pdf_file, "rb") as f:
                     st.download_button("📥 Scarica PDF Rapportino Ufficiale", f, file_name=pdf_file, mime="application/pdf")
@@ -305,17 +343,33 @@ elif selected_page == "Nuovo Rapportino":
 # ==========================================
 elif selected_page == "Riepilogo Mensile":
     st.title("📊 Riepilogo e Statistiche")
-    st.markdown("<div class='card'>", unsafe_allow_html=True)
-    st.metric(label="Totale Rapportini Emessi", value=len(st.session_state.reports))
-    st.metric(label="Totale Clienti in Archivio", value=len(st.session_state.clients))
-    st.markdown("</div>", unsafe_allow_html=True)
+    
+    col1, col2 = st.columns(2)
+    with col1:
+        st.markdown(f"""
+            <div class='card' style='text-align: center;'>
+                <h4 style='color: #94a3b8; margin-bottom: 5px;'>Totale Rapportini</h4>
+                <h2 style='font-size: 2.5rem; margin: 0;'>{len(st.session_state.reports)}</h2>
+            </div>
+        """, unsafe_allow_html=True)
+    with col2:
+        st.markdown(f"""
+            <div class='card' style='text-align: center;'>
+                <h4 style='color: #94a3b8; margin-bottom: 5px;'>Clienti in Archivio</h4>
+                <h2 style='font-size: 2.5rem; margin: 0;'>{len(st.session_state.clients)}</h2>
+            </div>
+        """, unsafe_allow_html=True)
     
     st.subheader("Storico Rapportini")
     if not st.session_state.reports:
         st.info("Nessun rapportino registrato.")
     else:
         for rep in st.session_state.reports:
-            st.write(f"**N. {rep['number']}** - Cliente: **{rep['client']}** ({rep['date']}) - Compilato da: {rep['author']}")
+            st.markdown(f"""
+                <div class='card'>
+                    <b>N. {rep['number']}</b> &nbsp;|&nbsp; Cliente: <b>{rep['client']}</b> &nbsp;|&nbsp; Data: {rep['date']} &nbsp;|&nbsp; Compilato da: {rep['author']}
+                </div>
+            """, unsafe_allow_html=True)
 
 
 # ==========================================
@@ -348,4 +402,9 @@ elif selected_page == "Gestione Utenti":
                     
         st.markdown("### Utenti Attivi")
         for uname, udata in st.session_state.users.items():
-            st.write(f"- **{udata['name']}** (Username: `{uname}`) - Ruolo: *{udata['role']}*")
+            st.markdown(f"""
+                <div class='card'>
+                    <b>{udata['name']}</b> &nbsp;(`{uname}`) &nbsp;|&nbsp; Ruolo: <em>{udata['role']}</em>
+                </div>
+            """, unsafe_allow_html=True)
+ 
