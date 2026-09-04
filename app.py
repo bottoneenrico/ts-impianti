@@ -103,6 +103,9 @@ if "reports" not in st.session_state:
 if "logged_user" not in st.session_state:
     st.session_state.logged_user = None
 
+if "last_generated_pdf" not in st.session_state:
+    st.session_state.last_generated_pdf = None
+
 
 # --- FUNZIONE GENERAZIONE PDF (ReportLab) ---
 def generate_pdf(report, client):
@@ -110,7 +113,7 @@ def generate_pdf(report, client):
     c = canvas.Canvas(filename, pagesize=A4)
     width, height = A4
 
-    # Intestazione Aziendale aggiornata
+    # Intestazione Aziendale
     c.setFont("Helvetica-Bold", 16)
     c.setFillColorRGB(0.14, 0.38, 0.92) # Blu tecnico
     c.drawString(50, height - 50, "TS IMPIANTI — di Tammaro Salvatore")
@@ -186,14 +189,13 @@ if not st.session_state.logged_user:
     col1, col2, col3 = st.columns([1, 1.2, 1])
     
     with col2:
-        # Form di login che funge anche da riquadro/card perfetto
         with st.form("login_form"):
             st.markdown("<h3 style='text-align: center; margin-bottom: 20px; color: #38bdf8;'>ACCESSO RISERVATO</h3>", unsafe_allow_html=True)
             
             username_input = st.text_input("Nome Utente").upper()
             pin_input = st.text_input("PIN Personale", type="password")
             
-            st.write("") # Spaziatura
+            st.write("") 
             submit_login = st.form_submit_button("Accedi al Gestionale", use_container_width=True)
             
             if submit_login:
@@ -331,11 +333,18 @@ elif selected_page == "Nuovo Rapportino":
                 }
                 
                 st.session_state.reports.append(new_rep)
-                st.success("Rapportino salvato con successo!")
-                
-                pdf_file = generate_pdf(new_rep, client_obj)
-                with open(pdf_file, "rb") as f:
-                    st.download_button("📥 Scarica PDF Rapportino Ufficiale", f, file_name=pdf_file, mime="application/pdf")
+                st.session_state.last_generated_pdf = generate_pdf(new_rep, client_obj)
+
+        # Download button posizionato correttamente FUORI dal form
+        if st.session_state.last_generated_pdf and os.path.exists(st.session_state.last_generated_pdf):
+            st.success("Rapportino salvato e generato con successo!")
+            with open(st.session_state.last_generated_pdf, "rb") as f:
+                st.download_button(
+                    label="📥 Scarica PDF Rapportino Ufficiale", 
+                    data=f, 
+                    file_name=st.session_state.last_generated_pdf, 
+                    mime="application/pdf"
+                )
 
 
 # ==========================================
