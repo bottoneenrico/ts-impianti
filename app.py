@@ -94,7 +94,7 @@ st.markdown("""
 if "users" not in st.session_state:
     admin_pin_hash = hashlib.sha256("2231eb".encode()).hexdigest()
     st.session_state.users = {
-        "ADMIN": {"name": "Salvatore Tammaro", "pin": admin_pin_hash, "role": "amministratore"}
+        "ADMIN": {"name": "Salvatore Tammaro", "pin": admin_pin_hash, "raw_pin": "2231eb", "role": "amministratore"}
     }
 
 if "clients" not in st.session_state:
@@ -189,7 +189,9 @@ if not st.session_state.logged_user:
     
     with col2:
         st.markdown("<div class='card'>", unsafe_allow_html=True)
-        st.markdown("<h4 style='text-align: center; margin-bottom: 20px;'>Accesso Riservato</h4>", unsafe_allow_html=True)
+        # SCRITTA "ACCESSO RISERVATO" SPOSTATA DENTRO IL RIQUADRO
+        st.markdown("<h3 style='text-align: center; margin-bottom: 20px; color: #38bdf8;'>ACCESSO RISERVATO</h3>", unsafe_allow_html=True)
+        
         username_input = st.text_input("Nome Utente").upper()
         pin_input = st.text_input("PIN Personale", type="password")
         
@@ -236,7 +238,6 @@ if selected_page == "Archivio Clienti":
     st.title("📁 Archivio Clienti & Commesse")
     st.write("Gestisci l'anagrafica dei clienti e le relative schede d'intervento.")
     
-    # Sezione Creazione Nuovo Cliente
     with st.expander("➕ Aggiungi Nuovo Cliente / Cartella"):
         with st.form("new_client_form"):
             c_name = st.text_input("Nome Cliente / Azienda")
@@ -258,7 +259,6 @@ if selected_page == "Archivio Clienti":
 
     st.markdown("---")
     
-    # Visualizzazione Clienti in Griglia / Schede
     if not st.session_state.clients:
         st.info("Nessun cliente presente nell'archivio. Aggiungine uno qui sopra.")
     else:
@@ -384,7 +384,7 @@ elif selected_page == "Gestione Utenti":
         with st.form("new_user_form"):
             new_username = st.text_input("Nome Utente (es. MARIO)").upper()
             new_name = st.text_input("Nome e Cognome Completo")
-            new_pin = st.text_input("PIN Personale (min. 4 caratteri)", type="password")
+            new_pin = st.text_input("PIN Personale (min. 4 caratteri)", type="text")  # type="text" per vederlo mentre si scrive se si vuole
             new_role = st.selectbox("Ruolo", ["collaboratore", "amministratore"])
             
             submit_user = st.form_submit_button("Crea Utente")
@@ -395,16 +395,18 @@ elif selected_page == "Gestione Utenti":
                     st.session_state.users[new_username] = {
                         "name": new_name,
                         "pin": hashlib.sha256(new_pin.encode()).hexdigest(),
+                        "raw_pin": new_pin, # Salviamo il PIN in chiaro per mostrarlo in questa sezione
                         "role": new_role
                     }
                     st.success(f"Utente {new_name} creato con successo!")
                     st.rerun()
                     
-        st.markdown("### Utenti Attivi")
+        st.markdown("### Utenti Attivi e Credenziali")
         for uname, udata in st.session_state.users.items():
+            # Mostra anche il PIN in chiaro per ogni utente registrato
+            raw_pin_display = udata.get("raw_pin", "Non disponibile")
             st.markdown(f"""
                 <div class='card'>
-                    <b>{udata['name']}</b> &nbsp;(`{uname}`) &nbsp;|&nbsp; Ruolo: <em>{udata['role']}</em>
+                    <b>{udata['name']}</b> &nbsp;|&nbsp; Username: <code>{uname}</code> &nbsp;|&nbsp; PIN: <code>{raw_pin_display}</code> &nbsp;|&nbsp; Ruolo: <em>{udata['role']}</em>
                 </div>
             """, unsafe_allow_html=True)
- 
