@@ -24,8 +24,8 @@ st.markdown("""
         font-family: 'Inter', sans-serif;
     }
     
-    /* Stile Card Moderno */
-    .card {
+    /* Stile Card Generale e Form di Login */
+    .card, [data-testid="stForm"] {
         background: rgba(30, 41, 59, 0.7);
         backdrop-filter: blur(12px);
         -webkit-backdrop-filter: blur(12px);
@@ -34,14 +34,10 @@ st.markdown("""
         border: 1px solid rgba(255, 255, 255, 0.08);
         box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.3);
         margin-bottom: 20px;
-        transition: transform 0.2s ease, border-color 0.2s ease;
-    }
-    .card:hover {
-        border-color: rgba(56, 189, 248, 0.3);
     }
 
     /* Bottoni moderni */
-    .stButton>button {
+    .stButton>button, [data-testid="stFormSubmitButton"]>button {
         background: linear-gradient(135deg, #2563eb 0%, #1d4ed8 100%);
         color: white;
         border-radius: 10px;
@@ -50,8 +46,9 @@ st.markdown("""
         padding: 10px 24px;
         box-shadow: 0 4px 12px rgba(37, 99, 235, 0.3);
         transition: all 0.2s ease;
+        width: 100%;
     }
-    .stButton>button:hover {
+    .stButton>button:hover, [data-testid="stFormSubmitButton"]>button:hover {
         background: linear-gradient(135deg, #1d4ed8 0%, #1e40af 100%);
         box-shadow: 0 6px 16px rgba(37, 99, 235, 0.5);
         transform: translateY(-1px);
@@ -94,7 +91,7 @@ st.markdown("""
 if "users" not in st.session_state:
     admin_pin_hash = hashlib.sha256("2231eb".encode()).hexdigest()
     st.session_state.users = {
-        "ADMIN": {"name": "Salvatore Tammaro", "pin": admin_pin_hash, "raw_pin": "2231eb", "role": "amministratore"}
+        "ADMIN": {"name": "Enrico Bottone", "pin": admin_pin_hash, "raw_pin": "2231eb", "role": "amministratore"}
     }
 
 if "clients" not in st.session_state:
@@ -113,10 +110,10 @@ def generate_pdf(report, client):
     c = canvas.Canvas(filename, pagesize=A4)
     width, height = A4
 
-    # Intestazione Aziendale
+    # Intestazione Aziendale aggiornata
     c.setFont("Helvetica-Bold", 16)
     c.setFillColorRGB(0.14, 0.38, 0.92) # Blu tecnico
-    c.drawString(50, height - 50, "TS IMPIANTI — di Salvatore Tammaro")
+    c.drawString(50, height - 50, "TS IMPIANTI — di Tammaro Salvatore")
     
     c.setFont("Helvetica", 10)
     c.setFillColorRGB(0.3, 0.3, 0.3)
@@ -184,40 +181,35 @@ def generate_pdf(report, client):
 
 # --- SISTEMA DI LOGIN ---
 if not st.session_state.logged_user:
-    # Logo / Titolo principale in alto
-    st.markdown("<h2 style='text-align: center; margin-bottom: 30px;'>⚡ TS IMPIANTI</h2>", unsafe_allow_html=True)
+    st.markdown("<h2 style='text-align: center; margin-bottom: 25px;'>⚡ TS IMPIANTI</h2>", unsafe_allow_html=True)
     
     col1, col2, col3 = st.columns([1, 1.2, 1])
     
     with col2:
-        # Apertura del riquadro (Card)
-        st.markdown("<div class='card'>", unsafe_allow_html=True)
-        
-        # Scritta ACCESSO RISERVATO ben visibile DENTRO il box
-        st.markdown("<h3 style='text-align: center; margin-bottom: 25px; color: #38bdf8;'>ACCESSO RISERVATO</h3>", unsafe_allow_html=True)
-        
-        username_input = st.text_input("Nome Utente").upper()
-        pin_input = st.text_input("PIN Personale", type="password")
-        
-        st.write("") # Spaziatura
-        if st.button("Accedi al Gestionale", use_container_width=True):
-            user_data = st.session_state.users.get(username_input)
-            hashed_input_pin = hashlib.sha256(pin_input.encode()).hexdigest()
+        # Form di login che funge anche da riquadro/card perfetto
+        with st.form("login_form"):
+            st.markdown("<h3 style='text-align: center; margin-bottom: 20px; color: #38bdf8;'>ACCESSO RISERVATO</h3>", unsafe_allow_html=True)
             
-            if user_data and user_data["pin"] == hashed_input_pin:
-                st.session_state.logged_user = {
-                    "username": username_input,
-                    "name": user_data["name"],
-                    "role": user_data["role"]
-                }
-                st.success(f"Accesso riuscito! Benvenuto, {user_data['name']}")
-                st.rerun()
-            else:
-                st.error("Nome utente o PIN errati.")
+            username_input = st.text_input("Nome Utente").upper()
+            pin_input = st.text_input("PIN Personale", type="password")
+            
+            st.write("") # Spaziatura
+            submit_login = st.form_submit_button("Accedi al Gestionale", use_container_width=True)
+            
+            if submit_login:
+                user_data = st.session_state.users.get(username_input)
+                hashed_input_pin = hashlib.sha256(pin_input.encode()).hexdigest()
                 
-        # Chiusura del riquadro (Card)
-        st.markdown("</div>", unsafe_allow_html=True)
-        
+                if user_data and user_data["pin"] == hashed_input_pin:
+                    st.session_state.logged_user = {
+                        "username": username_input,
+                        "name": user_data["name"],
+                        "role": user_data["role"]
+                    }
+                    st.success(f"Accesso riuscito! Benvenuto, {user_data['name']}")
+                    st.rerun()
+                else:
+                    st.error("Nome utente o PIN errati.")
     st.stop()
 
 
