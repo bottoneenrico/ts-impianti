@@ -349,4 +349,3 @@ elif selected_page == "Gestione Utenti":
         st.markdown("### Utenti Attivi")
         for uname, udata in st.session_state.users.items():
             st.write(f"- **{udata['name']}** (Username: `{uname}`) - Ruolo: *{udata['role']}*")
-  
