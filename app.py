@@ -160,7 +160,8 @@ if not st.session_state.logged_user:
                     "name": user_data["name"],
                     "role": user_data["role"]
                 }
-                st.success(Accesso riuscito! Benvenuto, {user_data['name']})
+                # RIGA CORRETTA QUI SOTTO
+                st.success(f"Accesso riuscito! Benvenuto, {user_data['name']}")
                 st.rerun()
             else:
                 st.error("Nome utente o PIN errati.")
@@ -348,4 +349,4 @@ elif selected_page == "Gestione Utenti":
         st.markdown("### Utenti Attivi")
         for uname, udata in st.session_state.users.items():
             st.write(f"- **{udata['name']}** (Username: `{uname}`) - Ruolo: *{udata['role']}*")
-
+  
