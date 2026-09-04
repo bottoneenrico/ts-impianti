@@ -184,17 +184,22 @@ def generate_pdf(report, client):
 
 # --- SISTEMA DI LOGIN ---
 if not st.session_state.logged_user:
+    # Logo / Titolo principale in alto
     st.markdown("<h2 style='text-align: center; margin-bottom: 30px;'>⚡ TS IMPIANTI</h2>", unsafe_allow_html=True)
+    
     col1, col2, col3 = st.columns([1, 1.2, 1])
     
     with col2:
+        # Apertura del riquadro (Card)
         st.markdown("<div class='card'>", unsafe_allow_html=True)
-        # SCRITTA "ACCESSO RISERVATO" SPOSTATA DENTRO IL RIQUADRO
-        st.markdown("<h3 style='text-align: center; margin-bottom: 20px; color: #38bdf8;'>ACCESSO RISERVATO</h3>", unsafe_allow_html=True)
+        
+        # Scritta ACCESSO RISERVATO ben visibile DENTRO il box
+        st.markdown("<h3 style='text-align: center; margin-bottom: 25px; color: #38bdf8;'>ACCESSO RISERVATO</h3>", unsafe_allow_html=True)
         
         username_input = st.text_input("Nome Utente").upper()
         pin_input = st.text_input("PIN Personale", type="password")
         
+        st.write("") # Spaziatura
         if st.button("Accedi al Gestionale", use_container_width=True):
             user_data = st.session_state.users.get(username_input)
             hashed_input_pin = hashlib.sha256(pin_input.encode()).hexdigest()
@@ -209,7 +214,10 @@ if not st.session_state.logged_user:
                 st.rerun()
             else:
                 st.error("Nome utente o PIN errati.")
+                
+        # Chiusura del riquadro (Card)
         st.markdown("</div>", unsafe_allow_html=True)
+        
     st.stop()
 
 
@@ -384,7 +392,7 @@ elif selected_page == "Gestione Utenti":
         with st.form("new_user_form"):
             new_username = st.text_input("Nome Utente (es. MARIO)").upper()
             new_name = st.text_input("Nome e Cognome Completo")
-            new_pin = st.text_input("PIN Personale (min. 4 caratteri)", type="text")  # type="text" per vederlo mentre si scrive se si vuole
+            new_pin = st.text_input("PIN Personale (min. 4 caratteri)")
             new_role = st.selectbox("Ruolo", ["collaboratore", "amministratore"])
             
             submit_user = st.form_submit_button("Crea Utente")
@@ -395,7 +403,7 @@ elif selected_page == "Gestione Utenti":
                     st.session_state.users[new_username] = {
                         "name": new_name,
                         "pin": hashlib.sha256(new_pin.encode()).hexdigest(),
-                        "raw_pin": new_pin, # Salviamo il PIN in chiaro per mostrarlo in questa sezione
+                        "raw_pin": new_pin,
                         "role": new_role
                     }
                     st.success(f"Utente {new_name} creato con successo!")
@@ -403,7 +411,6 @@ elif selected_page == "Gestione Utenti":
                     
         st.markdown("### Utenti Attivi e Credenziali")
         for uname, udata in st.session_state.users.items():
-            # Mostra anche il PIN in chiaro per ogni utente registrato
             raw_pin_display = udata.get("raw_pin", "Non disponibile")
             st.markdown(f"""
                 <div class='card'>
