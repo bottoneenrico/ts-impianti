@@ -1,1 +1,4 @@
 reportlab
+streamlit
+reportlab
+libsql-experimental
