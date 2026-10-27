@@ -1,8 +1,11 @@
 import os
 import hashlib
 import json
-from datetime import datetime
+import time
+import secrets
+from datetime import datetime, timedelta
 import streamlit as st
+import streamlit.components.v1 as components
 import sqlite3
 
 # Tenta di importare il client leggero per Turso
@@ -112,6 +115,14 @@ def init_db():
             description TEXT,
             expenses TEXT,
             author TEXT
+        )
+    ''')
+    
+    conn.execute('''
+        CREATE TABLE IF NOT EXISTS sessions (
+            token_hash TEXT PRIMARY KEY,
+            username TEXT,
+            expires TEXT
         )
     ''')
     
@@ -325,6 +336,57 @@ if "edit_report_num" not in st.session_state:
     st.session_state.edit_report_num = None
 
 
+# --- LOGIN PERSISTENTE (cookie) ---
+SESSION_COOKIE = "ts_session"
+SESSION_DAYS = 30
+
+
+def set_session_cookie(value, days):
+    components.html(f"""
+        <script>
+        const d = new Date();
+        d.setTime(d.getTime() + ({days}) * 24 * 60 * 60 * 1000);
+        const secure = window.parent.location.protocol === 'https:' ? '; Secure' : '';
+        window.parent.document.cookie = "{SESSION_COOKIE}={value}; expires=" + d.toUTCString() + "; path=/; SameSite=Lax" + secure;
+        </script>
+    """, height=0)
+
+
+def get_session_token():
+    try:
+        return st.context.cookies.get(SESSION_COOKIE)
+    except Exception:
+        return None
+
+
+def restore_session():
+    token = get_session_token()
+    if not token:
+        return None
+    token_hash = hashlib.sha256(token.encode()).hexdigest()
+    conn = get_db_connection()
+    row = conn.execute("SELECT username, expires FROM sessions WHERE token_hash = ?", (token_hash,)).fetchone()
+    if not row:
+        conn.close()
+        return None
+    if datetime.fromisoformat(row[1]) < datetime.now():
+        conn.execute("DELETE FROM sessions WHERE token_hash = ?", (token_hash,))
+        conn.commit()
+        conn.close()
+        return None
+    usr = conn.execute("SELECT name, role FROM users WHERE username = ?", (row[0],)).fetchone()
+    conn.close()
+    if not usr:
+        return None
+    return {"username": row[0], "name": usr[0], "role": usr[1]}
+
+
+if not st.session_state.logged_user:
+    restored_user = restore_session()
+    if restored_user:
+        st.session_state.logged_user = restored_user
+
+
 def delete_single_report(report_number):
     conn = get_db_connection()
     conn.execute("DELETE FROM reports WHERE number = ?", (report_number,))
@@ -489,7 +551,7 @@ if not st.session_state.logged_user:
         with st.form("login_form"):
             st.markdown("<h3 style='text-align: center; margin-bottom: 20px; color: #38bdf8;'>ACCESSO RISERVATO</h3>", unsafe_allow_html=True)
             
-            username_input = st.text_input("Nome Utente (es. Salvatore / Pietro)").strip()
+            username_input = st.text_input("Nome Utente").strip()
             pin_input = st.text_input("Password / PIN", type="password")
             
             st.write("") 
@@ -509,7 +571,17 @@ if not st.session_state.logged_user:
                         "name": user_record[0],
                         "role": user_record[2]
                     }
+                    token = secrets.token_urlsafe(32)
+                    expires = (datetime.now() + timedelta(days=SESSION_DAYS)).isoformat()
+                    conn = get_db_connection()
+                    conn.execute("DELETE FROM sessions WHERE expires < ?", (datetime.now().isoformat(),))
+                    conn.execute("INSERT INTO sessions (token_hash, username, expires) VALUES (?, ?, ?)",
+                                 (hashlib.sha256(token.encode()).hexdigest(), username_input, expires))
+                    conn.commit()
+                    conn.close()
+                    set_session_cookie(token, SESSION_DAYS)
                     st.success(f"Accesso riuscito! Benvenuto, {user_record[0]}")
+                    time.sleep(1)
                     st.rerun()
                 else:
                     st.error("Nome utente o password errati.")
@@ -544,7 +616,15 @@ selected_page = menu_options[selected_label]
 
 st.sidebar.markdown("---")
 if st.sidebar.button("🔒 &nbsp; Effettua il Logout", use_container_width=True):
+    token = get_session_token()
+    if token:
+        conn = get_db_connection()
+        conn.execute("DELETE FROM sessions WHERE token_hash = ?", (hashlib.sha256(token.encode()).hexdigest(),))
+        conn.commit()
+        conn.close()
+    set_session_cookie("", -1)
     st.session_state.logged_user = None
+    time.sleep(1)
     st.rerun()
 
 
