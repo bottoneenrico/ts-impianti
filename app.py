@@ -160,77 +160,151 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
+# --- TEMA GRAFICO (solo colori e aspetto, posizioni invariate) ---
 st.markdown("""
     <style>
-    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
+    @import url('https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&display=swap');
 
+    :root {
+        --bg: #0b1017;
+        --bg-2: #101722;
+        --surface: #151e2b;
+        --surface-2: #1b2636;
+        --line: rgba(148, 163, 184, 0.14);
+        --text: #e8eef6;
+        --muted: #8fa0b5;
+        --accent: #22d3ee;
+        --accent-2: #3b82f6;
+    }
+
+    html, body, .stApp, .stApp * {
+        font-family: 'Manrope', 'Inter', sans-serif;
+    }
     .stApp {
-        background: radial-gradient(circle at 10% 20%, #0f172a 0%, #020617 90%);
-        color: #f1f5f9;
-        font-family: 'Inter', sans-serif;
+        background:
+            radial-gradient(900px 500px at 85% -10%, rgba(34, 211, 238, 0.08), transparent 60%),
+            radial-gradient(700px 420px at -5% 10%, rgba(59, 130, 246, 0.10), transparent 60%),
+            var(--bg);
+        color: var(--text);
     }
-    
-    .card, [data-testid="stForm"] {
-        background: rgba(30, 41, 59, 0.7);
-        backdrop-filter: blur(12px);
-        -webkit-backdrop-filter: blur(12px);
-        padding: 24px;
-        border-radius: 16px;
-        border: 1px solid rgba(255, 255, 255, 0.08);
-        box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.3);
-        margin-bottom: 20px;
-    }
+    [data-testid="stHeader"] { background: transparent; }
 
-    .stButton>button, [data-testid="stFormSubmitButton"]>button {
-        background: linear-gradient(135deg, #2563eb 0%, #1d4ed8 100%);
-        color: white;
-        border-radius: 10px;
-        font-weight: 600;
-        border: none;
-        padding: 10px 24px;
-        box-shadow: 0 4px 12px rgba(37, 99, 235, 0.3);
-        transition: all 0.2s ease;
-        width: 100%;
-    }
-    .stButton>button:hover, [data-testid="stFormSubmitButton"]>button:hover {
-        background: linear-gradient(135deg, #1d4ed8 100%, #1e40af 100%);
-        box-shadow: 0 6px 16px rgba(37, 99, 235, 0.5);
-        transform: translateY(-1px);
-    }
-
-    .stTextInput>div>div>input, .stSelectbox>div>div>select, .stTextArea>div>div>textarea {
-        background-color: rgba(15, 23, 42, 0.6) !important;
-        border: 1px solid rgba(255, 255, 255, 0.1) !important;
-        color: #f1f5f9 !important;
-        border-radius: 10px !important;
-    }
-
-    h1, h2, h3 {
-        font-family: 'Inter', sans-serif;
-        font-weight: 700;
-        letter-spacing: -0.025em;
-        color: #f8fafc;
+    h1, h2, h3, h4 {
+        letter-spacing: -0.02em;
+        color: var(--text);
     }
     h1 {
-        background: linear-gradient(135deg, #38bdf8 0%, #818cf8 100%);
+        font-weight: 800;
+        background: linear-gradient(120deg, #e8eef6 30%, var(--accent) 100%);
         -webkit-background-clip: text;
         -webkit-text-fill-color: transparent;
     }
-    
+
+    .card, [data-testid="stForm"] {
+        background: linear-gradient(180deg, var(--surface-2) 0%, var(--surface) 100%);
+        padding: 24px;
+        border-radius: 18px;
+        border: 1px solid var(--line);
+        box-shadow: 0 1px 0 rgba(255,255,255,0.04) inset, 0 18px 40px -22px rgba(0, 0, 0, 0.7);
+        margin-bottom: 20px;
+    }
+
+    .stButton>button, [data-testid="stFormSubmitButton"]>button, [data-testid="stDownloadButton"]>button {
+        background: linear-gradient(135deg, var(--accent-2) 0%, #2563eb 100%);
+        color: #fff;
+        border-radius: 12px;
+        font-weight: 700;
+        letter-spacing: 0.01em;
+        border: 1px solid rgba(255, 255, 255, 0.10);
+        padding: 10px 24px;
+        box-shadow: 0 8px 20px -10px rgba(59, 130, 246, 0.8);
+        transition: transform .15s ease, box-shadow .15s ease, filter .15s ease;
+        width: 100%;
+    }
+    .stButton>button:hover, [data-testid="stFormSubmitButton"]>button:hover, [data-testid="stDownloadButton"]>button:hover {
+        background: linear-gradient(135deg, #4f94ff 0%, var(--accent-2) 100%);
+        box-shadow: 0 12px 26px -10px rgba(34, 211, 238, 0.55);
+        transform: translateY(-1px);
+        color: #fff;
+        border-color: rgba(34, 211, 238, 0.45);
+    }
+    .stButton>button:active, [data-testid="stFormSubmitButton"]>button:active {
+        transform: translateY(0);
+        filter: brightness(.95);
+    }
+    .stButton>button:focus-visible, [data-testid="stFormSubmitButton"]>button:focus-visible {
+        outline: 2px solid var(--accent);
+        outline-offset: 2px;
+    }
+
+    [data-baseweb="input"], [data-baseweb="textarea"], [data-baseweb="select"]>div {
+        background-color: var(--bg-2) !important;
+        border: 1px solid var(--line) !important;
+        border-radius: 12px !important;
+        transition: border-color .15s ease, box-shadow .15s ease;
+    }
+    [data-baseweb="input"]:focus-within, [data-baseweb="textarea"]:focus-within, [data-baseweb="select"]>div:focus-within {
+        border-color: var(--accent) !important;
+        box-shadow: 0 0 0 3px rgba(34, 211, 238, 0.15) !important;
+    }
+    .stTextInput input, .stTextArea textarea, .stNumberInput input {
+        color: var(--text) !important;
+    }
+    label, [data-testid="stWidgetLabel"] p {
+        color: var(--muted) !important;
+        font-weight: 600;
+    }
+
+    [data-testid="stExpander"] {
+        background: var(--surface);
+        border: 1px solid var(--line);
+        border-radius: 16px;
+        overflow: hidden;
+    }
+    [data-testid="stExpander"] summary { padding: 14px 18px; font-weight: 700; }
+    [data-testid="stExpander"] summary:hover { background: var(--surface-2); }
+
     [data-testid="stSidebar"] {
-        background-color: #080c14;
-        border-right: 1px solid rgba(255, 255, 255, 0.05);
+        background: linear-gradient(180deg, #0d141e 0%, #090e15 100%);
+        border-right: 1px solid var(--line);
         padding-top: 10px;
     }
-    
     [data-testid="stSidebar"] .stRadio label {
-        background: rgba(30, 41, 59, 0.4);
-        border: 1px solid rgba(255, 255, 255, 0.04);
-        border-radius: 10px;
+        background: transparent;
+        border: 1px solid transparent;
+        border-radius: 12px;
         padding: 10px 14px;
-        color: #cbd5e1;
-        font-weight: 500;
+        color: #b6c3d4;
+        font-weight: 600;
         width: 100%;
+        transition: background .15s ease, border-color .15s ease, color .15s ease;
+    }
+    [data-testid="stSidebar"] .stRadio label:hover {
+        background: rgba(148, 163, 184, 0.08);
+        color: var(--text);
+    }
+    [data-testid="stSidebar"] .stRadio label:has(input:checked) {
+        background: linear-gradient(90deg, rgba(34, 211, 238, 0.16), rgba(59, 130, 246, 0.08));
+        border-color: rgba(34, 211, 238, 0.35);
+        color: #fff;
+    }
+
+    [data-testid="stAlert"] { border-radius: 14px; border: 1px solid var(--line); }
+    hr { border-color: var(--line) !important; }
+    code {
+        background: rgba(34, 211, 238, 0.10);
+        color: #7ee7f7;
+        border-radius: 6px;
+        padding: 2px 6px;
+    }
+    [data-testid="stFileUploader"] section {
+        background: var(--bg-2);
+        border: 1px dashed rgba(34, 211, 238, 0.35);
+        border-radius: 14px;
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+        * { transition: none !important; }
     }
     </style>
 """, unsafe_allow_html=True)
