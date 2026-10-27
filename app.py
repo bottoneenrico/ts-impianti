@@ -180,6 +180,12 @@ st.markdown("""
     html, body, .stApp, .stApp * {
         font-family: 'Manrope', 'Inter', sans-serif;
     }
+    /* Le icone di Streamlit usano un font speciale: va lasciato intatto */
+    .stApp [data-testid="stIconMaterial"],
+    .stApp [class*="material-symbols"],
+    .stApp [class*="material-icons"] {
+        font-family: 'Material Symbols Rounded', 'Material Icons' !important;
+    }
     .stApp {
         background:
             radial-gradient(900px 500px at 85% -10%, rgba(34, 211, 238, 0.08), transparent 60%),
