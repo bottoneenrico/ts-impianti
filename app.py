@@ -354,6 +354,12 @@ def set_session_cookie(value, days):
 
 def get_session_token():
     try:
+        token = st.query_params.get("s")
+        if token:
+            return token
+    except Exception:
+        pass
+    try:
         return st.context.cookies.get(SESSION_COOKIE)
     except Exception:
         return None
@@ -552,7 +558,7 @@ if not st.session_state.logged_user:
             st.markdown("<h3 style='text-align: center; margin-bottom: 20px; color: #38bdf8;'>ACCESSO RISERVATO</h3>", unsafe_allow_html=True)
             
             username_input = st.text_input("Nome Utente").strip()
-            pin_input = st.text_input("Password / PIN", type="password")
+            pin_input = st.text_input("Password", type="password")
             
             st.write("") 
             submit_login = st.form_submit_button("Accedi al Gestionale", use_container_width=True)
@@ -580,6 +586,7 @@ if not st.session_state.logged_user:
                     conn.commit()
                     conn.close()
                     set_session_cookie(token, SESSION_DAYS)
+                    st.query_params["s"] = token
                     st.success(f"Accesso riuscito! Benvenuto, {user_record[0]}")
                     time.sleep(1)
                     st.rerun()
@@ -623,6 +630,7 @@ if st.sidebar.button("🔒 &nbsp; Effettua il Logout", use_container_width=True)
         conn.commit()
         conn.close()
     set_session_cookie("", -1)
+    st.query_params.clear()
     st.session_state.logged_user = None
     time.sleep(1)
     st.rerun()
@@ -1034,7 +1042,7 @@ elif selected_page == "Gestione Utenti":
             st.subheader("➕ Aggiungi Nuovo Utente")
             new_username = st.text_input("Nome Utente")
             new_name = st.text_input("Nome e Cognome Completo")
-            new_pin = st.text_input("Password / PIN", type="password")
+            new_pin = st.text_input("Password", type="password")
             
             if user["role"] == "sviluppatore":
                 new_role = st.selectbox("Ruolo", ["collaboratore", "amministratore", "sviluppatore"])
