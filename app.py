@@ -847,6 +847,7 @@ menu_options = {
 
 if user["role"] in ["sviluppatore", "amministratore"]:
     menu_options["✏️ &nbsp; Modifica Rapportino"] = "Modifica Rapportino"
+    menu_options["🏢 &nbsp; Modifica Cliente"] = "Modifica Cliente"
     menu_options["👥 &nbsp; Gestione Utenti"] = "Gestione Utenti"
 
 selected_label = st.sidebar.radio("Navigazione", list(menu_options.keys()), label_visibility="collapsed")
@@ -874,14 +875,14 @@ if st.session_state.get("flash"):
 # 1. ARCHIVIO CLIENTI
 # ==========================================
 if selected_page == "Archivio Clienti":
-    st.title("📁 Archivio Clienti & Commesse")
+    st.title("📁 Archivio Clienti")
     st.write("Seleziona o cerca un cliente per visualizzare la sua anagrafica e lo storico completo dei rapportini.")
     
     if user["role"] in ["sviluppatore", "amministratore"]:
         with st.expander("➕ Aggiungi Nuovo Cliente / Cartella"):
             with st.form("new_client_form"):
                 c_name = st.text_input("Nome Cliente / Azienda")
-                c_group = st.text_input("Gruppo / Commessa")
+                c_group = st.text_input("Gruppo")
                 c_address = st.text_input("Indirizzo")
                 c_phone = st.text_input("Telefono")
                 
@@ -911,12 +912,12 @@ if selected_page == "Archivio Clienti":
     if not clients_data:
         st.info("Nessun cliente presente nell'archivio.")
     else:
-        search_query = st.text_input("🔍 Cerca cliente o commessa...").lower()
+        search_query = st.text_input("🔍 Cerca cliente...").lower()
         
         for client_id, c_name, c_group, c_address, c_phone in clients_data:
             if search_query in c_name.lower() or search_query in (c_group or "").lower():
                 with st.container():
-                    with st.expander(f"🏢 {c_name} — Commessa: {c_group or 'N/D'}"):
+                    with st.expander(f"🏢 {c_name}" + (f" — {c_group}" if c_group else "")):
                         st.markdown(f"""
                             <p style='color: #94a3b8; margin-bottom: 15px;'>
                                 <b>Indirizzo:</b> {c_address or 'Non specificato'} &nbsp;|&nbsp; <b>Telefono:</b> {c_phone or 'Non specificato'}
@@ -1278,7 +1279,69 @@ elif selected_page == "Modifica Rapportino":
 
 
 # ==========================================
-# 5. GESTIONE UTENTI
+# 5. MODIFICA CLIENTE
+# ==========================================
+elif selected_page == "Modifica Cliente":
+    if user["role"] not in ["sviluppatore", "amministratore"]:
+        st.error("Accesso negato. Sezione riservata agli amministratori.")
+    else:
+        st.title("🏢 Modifica Cliente")
+
+        conn = get_db_connection()
+        res_edit_cli = conn.execute("SELECT id, name, group_name, address, phone FROM clients ORDER BY name")
+        clients_rows = res_edit_cli.fetchall()
+        conn.close()
+
+        if not clients_rows:
+            st.info("Nessun cliente disponibile da modificare.")
+        else:
+            names_count = {}
+            for row in clients_rows:
+                names_count[row[1]] = names_count.get(row[1], 0) + 1
+            client_options = {}
+            for row in clients_rows:
+                label = row[1] if names_count[row[1]] == 1 else f"{row[1]} (ID {row[0]})"
+                client_options[label] = row
+
+            sel_client_label = st.selectbox("Seleziona il Cliente da Modificare", list(client_options.keys()))
+            cid, cname, cgroup, caddr, cphone = client_options[sel_client_label]
+
+            with st.form("edit_client_form"):
+                st.subheader(f"Modifica Cliente: {cname}")
+                new_cli_name = st.text_input("Nome Cliente / Azienda", value=cname or "")
+                new_cli_group = st.text_input("Gruppo", value=cgroup or "")
+                new_cli_address = st.text_input("Indirizzo", value=caddr or "")
+                new_cli_phone = st.text_input("Telefono", value=cphone or "")
+
+                if st.form_submit_button("💾 Salva Modifiche Cliente"):
+                    new_cli_name = new_cli_name.strip()
+                    if not new_cli_name:
+                        st.error("Il nome del cliente non può essere vuoto.")
+                    else:
+                        conn = get_db_connection()
+                        dup = conn.execute("SELECT 1 FROM clients WHERE name = ? AND id != ?", (new_cli_name, cid)).fetchone()
+                        if dup:
+                            conn.close()
+                            st.error("Esiste già un cliente con questo nome.")
+                        else:
+                            conn.execute(
+                                "UPDATE clients SET name = ?, group_name = ?, address = ?, phone = ? WHERE id = ?",
+                                (new_cli_name, new_cli_group, new_cli_address, new_cli_phone, cid))
+                            if new_cli_name != cname:
+                                # i rapportini sono collegati al cliente tramite il nome
+                                conn.execute("UPDATE reports SET client = ? WHERE client = ?", (new_cli_name, cname))
+                            conn.commit()
+                            conn.close()
+                            st.session_state.flash = f"Cliente «{new_cli_name}» aggiornato con successo!"
+                            st.rerun()
+
+            st.markdown("---")
+            if st.button("🗑️ Elimina Cartella e Rapportini", key=f"del_cli_from_edit_{cid}"):
+                confirm_delete("client", cid, f"la cartella di {cname} con tutti i suoi rapportini", extra=cname)
+
+
+# ==========================================
+# 6. GESTIONE UTENTI
 # ==========================================
 elif selected_page == "Gestione Utenti":
     if user["role"] not in ["sviluppatore", "amministratore"]:
