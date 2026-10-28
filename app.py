@@ -1,4 +1,5 @@
 import os
+import io
 import hashlib
 import json
 import time
@@ -6,6 +7,7 @@ import secrets
 from datetime import datetime, timedelta
 import streamlit as st
 import streamlit.components.v1 as components
+import pandas as pd
 import sqlite3
 
 # Tenta di importare il client leggero per Turso
@@ -14,6 +16,14 @@ try:
     TURSO_AVAILABLE = True
 except ImportError:
     TURSO_AVAILABLE = False
+
+# Logo aziendale (metti logo.png nella stessa cartella di app.py)
+LOGO_PATH = "logo.png"
+
+MESI = ["Gennaio", "Febbraio", "Marzo", "Aprile", "Maggio", "Giugno",
+        "Luglio", "Agosto", "Settembre", "Ottobre", "Novembre", "Dicembre"]
+TIPI_INTERVENTO = ["Ordinario", "Straordinario", "Collaudo", "Guasto"]
+MIN_PASSWORD_LEN = 6
 
 
 # --- WRAPPER DI COMPATIBILITÀ PER UNIFICARE SQLITE E TURSO ---
@@ -81,6 +91,26 @@ def get_db_connection():
         return DatabaseWrapper(conn, is_turso=False)
 
 
+def get_secret(key):
+    try:
+        return st.secrets.get(key, "") or ""
+    except Exception:
+        return ""
+
+
+def seed_user(conn, username, name, role, secret_key):
+    """Crea l'utente iniziale solo se manca, con la password presa dai secrets.
+    Se esiste già, aggiorna nome e ruolo ma NON tocca la password."""
+    exists = conn.execute("SELECT username FROM users WHERE username = ?", (username,)).fetchone()
+    if not exists:
+        password = get_secret(secret_key)
+        if password:
+            conn.execute("INSERT INTO users (username, name, pin, raw_pin, role) VALUES (?, ?, ?, ?, ?)",
+                         (username, name, hashlib.sha256(password.encode()).hexdigest(), "", role))
+    else:
+        conn.execute("UPDATE users SET name = ?, role = ? WHERE username = ?", (name, role, username))
+
+
 def init_db():
     conn = get_db_connection()
     
@@ -117,7 +147,7 @@ def init_db():
             author TEXT
         )
     ''')
-    
+
     conn.execute('''
         CREATE TABLE IF NOT EXISTS sessions (
             token_hash TEXT PRIMARY KEY,
@@ -126,38 +156,15 @@ def init_db():
         )
     ''')
     
-    dev_pin_raw = "enricobottone@"
-    dev_pin_hash = hashlib.sha256(dev_pin_raw.encode()).hexdigest()
     conn.execute("DELETE FROM users WHERE username = 'ADMIN'")
-    res = conn.execute("SELECT * FROM users WHERE username = 'DEV'")
-    if not res.fetchone():
-        conn.execute("INSERT INTO users (username, name, pin, raw_pin, role) VALUES (?, ?, ?, ?, ?)", 
-                     ("DEV", "Enrico Bottone", dev_pin_hash, dev_pin_raw, "sviluppatore"))
-    else:
-        conn.execute("UPDATE users SET name = 'Enrico Bottone', pin = ?, raw_pin = ?, role = 'sviluppatore' WHERE username = 'DEV'", (dev_pin_hash, dev_pin_raw))
-
-    salvatore_username = "Salvatore"
-    salvatore_name = "Salvatore Tammaro"
-    salvatore_pin_raw = "TSimpianti@"
-    salvatore_pin_hash = hashlib.sha256(salvatore_pin_raw.encode()).hexdigest()
     conn.execute("DELETE FROM users WHERE username = 'SALVATORE'")
-    res = conn.execute("SELECT * FROM users WHERE username = ?", (salvatore_username,))
-    if not res.fetchone():
-        conn.execute("INSERT INTO users (username, name, pin, raw_pin, role) VALUES (?, ?, ?, ?, ?)", 
-                     (salvatore_username, salvatore_name, salvatore_pin_hash, salvatore_pin_raw, "amministratore"))
-    else:
-        conn.execute("UPDATE users SET name = ?, pin = ?, raw_pin = ?, role = 'amministratore' WHERE username = ?", (salvatore_name, salvatore_pin_hash, salvatore_pin_raw, salvatore_username))
 
-    pietro_username = "Pietro"
-    pietro_name = "Pietro"
-    pietro_pin_raw = "121207@"
-    pietro_pin_hash = hashlib.sha256(pietro_pin_raw.encode()).hexdigest()
-    res = conn.execute("SELECT * FROM users WHERE username = ?", (pietro_username,))
-    if not res.fetchone():
-        conn.execute("INSERT INTO users (username, name, pin, raw_pin, role) VALUES (?, ?, ?, ?, ?)", 
-                     (pietro_username, pietro_name, pietro_pin_hash, pietro_pin_raw, "collaboratore"))
-    else:
-        conn.execute("UPDATE users SET name = ?, pin = ?, raw_pin = ?, role = 'collaboratore' WHERE username = ?", (pietro_name, pietro_pin_hash, pietro_pin_raw, pietro_username))
+    seed_user(conn, "DEV", "Enrico Bottone", "sviluppatore", "DEV_PASSWORD")
+    seed_user(conn, "Salvatore", "Salvatore Tammaro", "amministratore", "SALVATORE_PASSWORD")
+    seed_user(conn, "Pietro", "Pietro", "collaboratore", "PIETRO_PASSWORD")
+
+    # Le password non vengono più conservate in chiaro: cancello quelle già salvate
+    conn.execute("UPDATE users SET raw_pin = ''")
 
     conn.commit()
     conn.close()
@@ -336,7 +343,7 @@ if "edit_report_num" not in st.session_state:
     st.session_state.edit_report_num = None
 
 
-# --- LOGIN PERSISTENTE (cookie) ---
+# --- LOGIN PERSISTENTE (cookie + codice nell'indirizzo) ---
 SESSION_COOKIE = "ts_session"
 SESSION_DAYS = 30
 
@@ -393,6 +400,85 @@ if not st.session_state.logged_user:
         st.session_state.logged_user = restored_user
 
 
+# --- FUNZIONI DI SUPPORTO: SPESE ---
+def parse_expenses(exp_json):
+    if not exp_json:
+        return []
+    try:
+        data = json.loads(exp_json)
+        return data if isinstance(data, list) else []
+    except Exception:
+        return []
+
+
+def to_float(value):
+    try:
+        number = float(value)
+        return 0.0 if number != number else number
+    except Exception:
+        return 0.0
+
+
+def expenses_total(exp_json):
+    return sum(to_float(e.get("amount", 0)) for e in parse_expenses(exp_json))
+
+
+def existing_photo(exp_json):
+    for e in parse_expenses(exp_json):
+        if e.get("photo"):
+            return e["photo"]
+    return None
+
+
+def expenses_to_df(exp_json):
+    rows = []
+    for e in parse_expenses(exp_json):
+        amount = to_float(e.get("amount", 0))
+        if e.get("item") or amount > 0:
+            rows.append({"Voce": e.get("item") or "", "Importo (€)": amount})
+    df = pd.DataFrame(rows, columns=["Voce", "Importo (€)"])
+    df["Voce"] = df["Voce"].astype(str)
+    df["Importo (€)"] = df["Importo (€)"].astype(float)
+    return df
+
+
+def expenses_editor(key, exp_json=""):
+    return st.data_editor(
+        expenses_to_df(exp_json),
+        num_rows="dynamic",
+        key=key,
+        column_config={
+            "Voce": st.column_config.TextColumn("Voce Spesa o Materiale", width="large"),
+            "Importo (€)": st.column_config.NumberColumn("Importo (€)", min_value=0.0, step=0.5, format="%.2f"),
+        },
+    )
+
+
+def build_expenses_json(df, photo_path=None):
+    items = []
+    for row in df.to_dict("records"):
+        item = row.get("Voce")
+        if item is None or (isinstance(item, float) and item != item):
+            item = ""
+        item = str(item).strip()
+        amount = to_float(row.get("Importo (€)"))
+        if item or amount > 0:
+            items.append({"item": item, "amount": amount, "photo": None})
+    if photo_path:
+        if items:
+            items[0]["photo"] = photo_path
+        else:
+            items.append({"item": "", "amount": 0.0, "photo": photo_path})
+    return json.dumps(items)
+
+
+def parse_date(text):
+    try:
+        return datetime.strptime((text or "").strip(), "%d/%m/%Y")
+    except Exception:
+        return None
+
+
 def delete_single_report(report_number):
     conn = get_db_connection()
     conn.execute("DELETE FROM reports WHERE number = ?", (report_number,))
@@ -407,145 +493,285 @@ def delete_single_report(report_number):
             pass
 
 
-def generate_pdf(report, client):
+# --- GENERAZIONE PDF ---
+def build_pdf(report, client):
+    from xml.sax.saxutils import escape
+    from reportlab.lib import colors
     from reportlab.lib.pagesizes import A4
+    from reportlab.lib.units import mm
+    from reportlab.lib.styles import ParagraphStyle
+    from reportlab.lib.enums import TA_RIGHT
+    from reportlab.lib.utils import ImageReader
     from reportlab.pdfgen import canvas
+    from reportlab.platypus import (SimpleDocTemplate, Paragraph, Spacer, Table,
+                                    TableStyle, Image, KeepTogether)
 
-    filename = f"Rapportino_{report['number']}.pdf"
-    c = canvas.Canvas(filename, pagesize=A4)
-    width, height = A4
+    PRIMARY = colors.HexColor("#1d4ed8")
+    DARK = colors.HexColor("#0f172a")
+    MUTED = colors.HexColor("#64748b")
+    LIGHT = colors.HexColor("#f1f5f9")
+    LINE = colors.HexColor("#cbd5e1")
 
-    c.setFont("Helvetica-Bold", 16)
-    c.setFillColorRGB(0.14, 0.38, 0.92) 
-    c.drawString(50, height - 50, "TS IMPIANTI — di Tammaro Salvatore")
-    
-    c.setFont("Helvetica", 10)
-    c.setFillColorRGB(0.3, 0.3, 0.3)
-    c.drawString(50, height - 65, "Impianti Elettrici Civili e Industriali")
-    
-    c.setStrokeColorRGB(0.2, 0.2, 0.2)
-    c.line(50, height - 75, width - 50, height - 75)
+    page_w = A4[0] - 36 * mm
 
-    c.setFont("Helvetica-Bold", 12)
-    c.setFillColorRGB(0, 0, 0)
-    c.drawString(50, height - 105, f"RAPPORTINO DI INTERVENTO N. {report['number']}")
-    
-    c.setFont("Helvetica", 10)
-    y_left = height - 130
-    
-    if report.get('date'):
-        c.drawString(50, y_left, f"Data Intervento: {report['date']}")
-        y_left -= 15
+    def esc(value):
+        return escape(str(value or "")).replace("\n", "<br/>")
 
-    duration_val = (report.get('duration') or "").strip()
-    if duration_val and duration_val.upper() != "N/D":
-        c.drawString(50, y_left, f"Durata Servizio: {duration_val}")
-        y_left -= 15
+    st_normal = ParagraphStyle("n", fontName="Helvetica", fontSize=10, leading=14, textColor=DARK)
+    st_label = ParagraphStyle("l", parent=st_normal, fontSize=9.5, leading=15)
+    st_title = ParagraphStyle("t", fontName="Helvetica-Bold", fontSize=15, leading=19, textColor=DARK)
+    st_brand = ParagraphStyle("b", fontName="Helvetica-Bold", fontSize=19, leading=23, textColor=PRIMARY)
+    st_sub = ParagraphStyle("s", fontName="Helvetica", fontSize=9.5, leading=13, textColor=MUTED)
+    st_sec = ParagraphStyle("sec", fontName="Helvetica-Bold", fontSize=10.5, leading=14, textColor=colors.white)
+    st_box_title = ParagraphStyle("bt", fontName="Helvetica-Bold", fontSize=9.5, leading=15, textColor=PRIMARY)
+    st_right = ParagraphStyle("r", parent=st_normal, alignment=TA_RIGHT)
+    st_right_b = ParagraphStyle("rb", parent=st_right, fontName="Helvetica-Bold")
+    st_bold = ParagraphStyle("bd", parent=st_normal, fontName="Helvetica-Bold")
+    st_hdr = ParagraphStyle("h", parent=st_normal, fontName="Helvetica-Bold", textColor=colors.white)
+    st_hdr_r = ParagraphStyle("hr", parent=st_hdr, alignment=TA_RIGHT)
 
-    if report.get('type'):
-        c.drawString(50, y_left, f"Tipo Intervento: {report['type']}")
-        y_left -= 15
+    def section(title):
+        t = Table([[Paragraph(title, st_sec)]], colWidths=[page_w])
+        t.setStyle(TableStyle([
+            ("BACKGROUND", (0, 0), (-1, -1), PRIMARY),
+            ("LEFTPADDING", (0, 0), (-1, -1), 8),
+            ("TOPPADDING", (0, 0), (-1, -1), 4),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+        ]))
+        return t
 
-    if report.get('technician'):
-        c.drawString(50, y_left, f"Tecnici Incaricati: {report['technician']}")
-        y_left -= 15
+    def kv(label, value):
+        return Paragraph(f"<b>{label}:</b> {esc(value)}", st_label)
 
-    if report.get('author'):
-        c.drawString(50, y_left, f"Compilato da: {report['author']}")
-        y_left -= 15
+    class NumberedCanvas(canvas.Canvas):
+        def __init__(self, *args, **kwargs):
+            canvas.Canvas.__init__(self, *args, **kwargs)
+            self._saved_page_states = []
 
-    c.setFont("Helvetica-Bold", 11)
-    c.drawString(320, height - 130, "DATI CLIENTE:")
-    c.setFont("Helvetica", 10)
-    
-    y_right = height - 145
-    if client.get('name'):
-        c.drawString(320, y_right, f"Cliente: {client['name']}")
-        y_right -= 15
+        def showPage(self):
+            self._saved_page_states.append(dict(self.__dict__))
+            self._startPage()
 
-    address_val = (client.get('address') or "").strip()
-    if address_val and address_val.upper() != "N/D":
-        c.drawString(320, y_right, f"Indirizzo: {address_val}")
-        y_right -= 15
+        def save(self):
+            total = len(self._saved_page_states)
+            for state in self._saved_page_states:
+                self.__dict__.update(state)
+                self._draw_footer(total)
+                canvas.Canvas.showPage(self)
+            canvas.Canvas.save(self)
 
-    phone_val = (client.get('phone') or "").strip()
-    if phone_val and phone_val.upper() != "N/D":
-        c.drawString(320, y_right, f"Telefono: {phone_val}")
-        y_right -= 15
+        def _draw_footer(self, total):
+            self.setStrokeColor(LINE)
+            self.setLineWidth(0.6)
+            self.line(18 * mm, 14 * mm, A4[0] - 18 * mm, 14 * mm)
+            self.setFont("Helvetica", 8.5)
+            self.setFillColor(MUTED)
+            self.drawString(18 * mm, 9.5 * mm, "TS Impianti — di Tammaro Salvatore")
+            self.drawRightString(A4[0] - 18 * mm, 9.5 * mm, f"Pagina {self._pageNumber} di {total}")
 
-    y_next = min(y_left, y_right) - 20
+    story = []
 
-    desc_text = (report.get('description') or "").strip()
-    if desc_text:
-        c.setFont("Helvetica-Bold", 11)
-        c.drawString(50, y_next, "DESCRIZIONE DEI LAVORI ESEGUITI:")
-        y_next -= 18
-
-        c.setFont("Helvetica", 10)
-        text_object = c.beginText(50, y_next)
-        text_object.setFont("Helvetica", 10)
-        lines = desc_text.split('\n')
-        for line in lines:
-            text_object.textLine(line)
-        c.drawText(text_object)
-        y_next -= (len(lines) * 14) + 15
-
-    expenses_list = []
-    if report.get('expenses'):
+    # Intestazione con logo
+    brand_block = [
+        Paragraph("TS IMPIANTI", st_brand),
+        Paragraph("di Tammaro Salvatore", st_sub),
+        Paragraph("Impianti Elettrici Civili e Industriali", st_sub),
+    ]
+    logo = None
+    if os.path.exists(LOGO_PATH):
         try:
-            expenses_list = json.loads(report['expenses'])
+            iw, ih = ImageReader(LOGO_PATH).getSize()
+            logo_w = 32 * mm
+            logo = Image(LOGO_PATH, width=logo_w, height=logo_w * ih / iw)
         except Exception:
-            expenses_list = []
+            logo = None
+    if logo:
+        header = Table([[logo, brand_block]], colWidths=[38 * mm, page_w - 38 * mm])
+    else:
+        header = Table([[brand_block]], colWidths=[page_w])
+    header.setStyle(TableStyle([
+        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+        ("LEFTPADDING", (0, 0), (-1, -1), 0),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 8),
+        ("LINEBELOW", (0, 0), (-1, -1), 1.4, PRIMARY),
+    ]))
+    story += [header, Spacer(1, 12)]
 
-    photo_to_draw = None
-    total_expense = 0
+    story += [Paragraph(f"RAPPORTINO DI INTERVENTO N. {report['number']}", st_title), Spacer(1, 8)]
 
-    valid_expenses = [e for e in expenses_list if e.get('item') or (e.get('amount', 0) > 0)]
-    
-    if valid_expenses:
-        c.setFont("Helvetica-Bold", 11)
-        c.drawString(50, y_next, "SPESE VIVE E MATERIALI:")
-        y_next -= 18
+    # Dati intervento e cliente
+    left = []
+    if report.get("date"):
+        left.append(kv("Data intervento", report["date"]))
+    duration_val = (report.get("duration") or "").strip()
+    if duration_val and duration_val.upper() != "N/D":
+        left.append(kv("Durata servizio", duration_val))
+    if report.get("type"):
+        left.append(kv("Tipo intervento", report["type"]))
+    if report.get("technician"):
+        left.append(kv("Tecnici incaricati", report["technician"]))
+    if report.get("author"):
+        left.append(kv("Compilato da", report["author"]))
 
-        for expense in valid_expenses:
-            c.setFont("Helvetica", 10)
-            item_name = expense.get('item', 'Spesa generica')
-            amt = expense.get('amount', 0.0)
-            c.drawString(70, y_next, f"- {item_name}")
-            c.drawString(350, y_next, f"€ {amt:.2f}")
-            total_expense += amt
-            y_next -= 15
+    right = [Paragraph("DATI CLIENTE", st_box_title)]
+    if client.get("name"):
+        right.append(kv("Cliente", client["name"]))
+    address_val = (client.get("address") or "").strip()
+    if address_val and address_val.upper() != "N/D":
+        right.append(kv("Indirizzo", address_val))
+    phone_val = (client.get("phone") or "").strip()
+    if phone_val and phone_val.upper() != "N/D":
+        right.append(kv("Telefono", phone_val))
 
-            if expense.get('photo') and os.path.exists(expense['photo']):
-                photo_to_draw = expense['photo']
+    info = Table([[left or [Paragraph("", st_label)], right]], colWidths=[page_w * 0.55, page_w * 0.45])
+    info.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (-1, -1), LIGHT),
+        ("BOX", (0, 0), (-1, -1), 0.6, LINE),
+        ("LINEBEFORE", (1, 0), (1, 0), 0.6, LINE),
+        ("VALIGN", (0, 0), (-1, -1), "TOP"),
+        ("LEFTPADDING", (0, 0), (-1, -1), 10),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 10),
+        ("TOPPADDING", (0, 0), (-1, -1), 8),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 8),
+    ]))
+    story += [info, Spacer(1, 14)]
 
-        if total_expense > 0:
-            c.setFont("Helvetica-Bold", 10)
-            c.drawString(70, y_next - 5, f"Totale Spese: € {total_expense:.2f}")
-            y_next -= 25
+    # Descrizione lavori
+    desc_text = (report.get("description") or "").strip()
+    if desc_text:
+        story += [section("DESCRIZIONE DEI LAVORI ESEGUITI"), Spacer(1, 6),
+                  Paragraph(esc(desc_text), st_normal), Spacer(1, 14)]
 
-    if not photo_to_draw and expenses_list:
-        for e in expenses_list:
-            if e.get('photo') and os.path.exists(e['photo']):
-                photo_to_draw = e['photo']
+    # Spese e materiali
+    expenses = parse_expenses(report.get("expenses"))
+    valid = [e for e in expenses if e.get("item") or to_float(e.get("amount")) > 0]
+    if valid:
+        rows = [[Paragraph("Voce", st_hdr), Paragraph("Importo", st_hdr_r)]]
+        total = 0.0
+        for e in valid:
+            amount = to_float(e.get("amount"))
+            total += amount
+            rows.append([Paragraph(esc(e.get("item") or "Spesa generica"), st_normal),
+                         Paragraph(f"€ {amount:.2f}", st_right)])
+        rows.append([Paragraph("Totale spese", st_bold), Paragraph(f"€ {total:.2f}", st_right_b)])
+        table = Table(rows, colWidths=[page_w - 40 * mm, 40 * mm], repeatRows=1)
+        table.setStyle(TableStyle([
+            ("BACKGROUND", (0, 0), (-1, 0), DARK),
+            ("ROWBACKGROUNDS", (0, 1), (-1, -2), [colors.white, LIGHT]),
+            ("BACKGROUND", (0, -1), (-1, -1), colors.HexColor("#e2e8f0")),
+            ("LINEABOVE", (0, -1), (-1, -1), 1, PRIMARY),
+            ("LINEBELOW", (0, 0), (-1, -2), 0.4, LINE),
+            ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+            ("LEFTPADDING", (0, 0), (-1, -1), 8),
+            ("RIGHTPADDING", (0, 0), (-1, -1), 8),
+            ("TOPPADDING", (0, 0), (-1, -1), 5),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
+        ]))
+        story += [section("SPESE VIVE E MATERIALI"), Spacer(1, 6), table, Spacer(1, 14)]
 
-    if photo_to_draw:
+    # Foto allegata
+    photo = None
+    for e in expenses:
+        p = e.get("photo")
+        if p and os.path.exists(p):
+            photo = p
+            break
+    if photo:
         try:
-            c.setFont("Helvetica-Bold", 11)
-            c.drawString(50, y_next - 10, "FOTO ALLEGATA:")
-            c.drawImage(photo_to_draw, 50, y_next - 150, width=180, height=120, preserveAspectRatio=True, anchor='nw')
+            iw, ih = ImageReader(photo).getSize()
+            scale = min((85 * mm) / iw, (70 * mm) / ih)
+            story.append(KeepTogether([
+                section("FOTO ALLEGATA"), Spacer(1, 6),
+                Image(photo, width=iw * scale, height=ih * scale, hAlign="LEFT"),
+            ]))
+            story.append(Spacer(1, 14))
         except Exception:
             pass
 
-    c.setFont("Helvetica", 10)
-    c.line(50, 90, 200, 90)
-    c.drawString(50, 75, "Firma Tecnico")
+    # Firme
+    sig = Table(
+        [["", "", ""], [Paragraph("Firma Tecnico", st_sub), "", Paragraph("Firma Cliente", st_sub)]],
+        colWidths=[65 * mm, page_w - 130 * mm, 65 * mm],
+        rowHeights=[16 * mm, None],
+    )
+    sig.setStyle(TableStyle([
+        ("LINEABOVE", (0, 1), (0, 1), 0.8, DARK),
+        ("LINEABOVE", (2, 1), (2, 1), 0.8, DARK),
+        ("LEFTPADDING", (0, 0), (-1, -1), 0),
+    ]))
+    story += [Spacer(1, 10), KeepTogether([sig])]
 
-    c.line(350, 90, 500, 90)
-    c.drawString(350, 75, "Firma Cliente")
+    buffer = io.BytesIO()
+    doc = SimpleDocTemplate(
+        buffer, pagesize=A4,
+        leftMargin=18 * mm, rightMargin=18 * mm, topMargin=15 * mm, bottomMargin=20 * mm,
+        title=f"Rapportino {report['number']}", author="TS Impianti",
+    )
+    doc.build(story, canvasmaker=NumberedCanvas)
+    return buffer.getvalue()
 
-    c.save()
-    return filename
+
+@st.cache_data(show_spinner=False, max_entries=300)
+def _cached_pdf(report_json, client_json, photo_sig):
+    return build_pdf(json.loads(report_json), json.loads(client_json))
+
+
+def get_pdf_bytes(report, client):
+    # Il PDF viene creato una sola volta e riutilizzato finché il rapportino non cambia
+    sig = []
+    for e in parse_expenses(report.get("expenses")):
+        p = e.get("photo")
+        sig.append(os.path.getmtime(p) if p and os.path.exists(p) else 0)
+    return _cached_pdf(
+        json.dumps(report, sort_keys=True, default=str),
+        json.dumps(client, sort_keys=True, default=str),
+        tuple(sig),
+    )
+
+
+def pdf_download(report, client, key, label, lazy=False):
+    ready_key = f"pdf_ready_{key}"
+    if lazy and not st.session_state.get(ready_key):
+        if st.button(f"📄 Prepara PDF N. {report['number']}", key=f"prep_{key}"):
+            st.session_state[ready_key] = True
+            st.rerun()
+        return
+    st.download_button(
+        label=label,
+        data=get_pdf_bytes(report, client),
+        file_name=f"Rapportino_{report['number']}.pdf",
+        mime="application/pdf",
+        key=f"dl_{key}",
+    )
+
+
+# --- CONFERMA ELIMINAZIONE ---
+@st.dialog("Conferma eliminazione")
+def confirm_delete(kind, key, label, extra=None):
+    st.warning(f"Stai per eliminare {label}. L'operazione non si può annullare.")
+    col_yes, col_no = st.columns(2)
+    with col_yes:
+        if st.button("Sì, elimina", key=f"yes_{kind}_{key}"):
+            if kind == "report":
+                delete_single_report(key)
+                st.session_state.edit_report_num = None
+            elif kind == "client":
+                conn = get_db_connection()
+                conn.execute("DELETE FROM clients WHERE id = ?", (key,))
+                conn.execute("DELETE FROM reports WHERE client = ?", (extra,))
+                conn.commit()
+                conn.close()
+            elif kind == "user":
+                conn = get_db_connection()
+                conn.execute("DELETE FROM users WHERE username = ?", (key,))
+                conn.execute("DELETE FROM sessions WHERE username = ?", (key,))
+                conn.commit()
+                conn.close()
+            st.session_state.flash = "Eliminazione completata."
+            st.rerun()
+    with col_no:
+        if st.button("Annulla", key=f"no_{kind}_{key}"):
+            st.rerun()
 
 
 if not st.session_state.logged_user:
@@ -554,6 +780,11 @@ if not st.session_state.logged_user:
     col1, col2, col3 = st.columns([1, 1.2, 1])
     
     with col2:
+        _conn = get_db_connection()
+        _n_users = _conn.execute("SELECT COUNT(*) FROM users").fetchone()[0]
+        _conn.close()
+        if _n_users == 0:
+            st.warning("Nessun utente configurato. Imposta DEV_PASSWORD (e le altre) nei Secrets dell'app e riavviala.")
         with st.form("login_form"):
             st.markdown("<h3 style='text-align: center; margin-bottom: 20px; color: #38bdf8;'>ACCESSO RISERVATO</h3>", unsafe_allow_html=True)
             
@@ -635,6 +866,9 @@ if st.sidebar.button("🔒 &nbsp; Effettua il Logout", use_container_width=True)
     time.sleep(1)
     st.rerun()
 
+if st.session_state.get("flash"):
+    st.success(st.session_state.pop("flash"))
+
 
 # ==========================================
 # 1. ARCHIVIO CLIENTI
@@ -666,7 +900,13 @@ if selected_page == "Archivio Clienti":
     conn = get_db_connection()
     res_clients = conn.execute("SELECT id, name, group_name, address, phone FROM clients")
     clients_data = res_clients.fetchall()
+    res_all_reports = conn.execute("SELECT number, date, duration, technician, type, description, expenses, author, client FROM reports ORDER BY number DESC")
+    all_reports_rows = res_all_reports.fetchall()
     conn.close()
+
+    reports_by_client = {}
+    for r in all_reports_rows:
+        reports_by_client.setdefault(r[8], []).append(r[:8])
     
     if not clients_data:
         st.info("Nessun cliente presente nell'archivio.")
@@ -685,10 +925,7 @@ if selected_page == "Archivio Clienti":
                         
                         st.markdown("#### 📜 Storico Rapportini")
                         
-                        conn = get_db_connection()
-                        res_reports = conn.execute("SELECT number, date, duration, technician, type, description, expenses, author FROM reports WHERE client = ? ORDER BY number DESC", (c_name,))
-                        client_reports = res_reports.fetchall()
-                        conn.close()
+                        client_reports = reports_by_client.get(c_name, [])
                         
                         if not client_reports:
                             st.info("Nessun rapportino registrato per questo cliente.")
@@ -711,39 +948,20 @@ if selected_page == "Archivio Clienti":
                                     "expenses": rep_exp, "author": rep_auth
                                 }
                                 client_obj = {"name": c_name, "address": c_address, "phone": c_phone}
-                                pdf_path = generate_pdf(rep_dict, client_obj)
                                 
                                 if user["role"] in ["amministratore", "sviluppatore"]:
                                     col_dl, col_del_rep = st.columns([1, 1])
                                     with col_dl:
-                                        with open(pdf_path, "rb") as f:
-                                            st.download_button(
-                                                label=f"📥 Scarica N. {rep_num}",
-                                                data=f, file_name=pdf_path, mime="application/pdf",
-                                                key=f"dl_rep_{rep_num}"
-                                            )
+                                        pdf_download(rep_dict, client_obj, f"arch_{rep_num}", f"📥 Scarica N. {rep_num}", lazy=True)
                                     with col_del_rep:
                                         if st.button(f"🗑️ Elimina N. {rep_num}", key=f"del_rep_client_{rep_num}"):
-                                            delete_single_report(rep_num)
-                                            st.success(f"Rapportino N. {rep_num} eliminato.")
-                                            st.rerun()
+                                            confirm_delete("report", rep_num, f"il rapportino N. {rep_num}")
                                 else:
-                                    with open(pdf_path, "rb") as f:
-                                        st.download_button(
-                                            label=f"📥 Scarica N. {rep_num}",
-                                            data=f, file_name=pdf_path, mime="application/pdf",
-                                            key=f"dl_rep_{rep_num}"
-                                        )
+                                    pdf_download(rep_dict, client_obj, f"arch_{rep_num}", f"📥 Scarica N. {rep_num}", lazy=True)
 
                     if user["role"] in ["amministratore", "sviluppatore"]:
                         if st.button("🗑️ Elimina Cartella e Rapportini", key=f"del_cli_{client_id}"):
-                            conn = get_db_connection()
-                            conn.execute("DELETE FROM clients WHERE id = ?", (client_id,))
-                            conn.execute("DELETE FROM reports WHERE client = ?", (c_name,))
-                            conn.commit()
-                            conn.close()
-                            st.success("Cartella cliente eliminata.")
-                            st.rerun()
+                            confirm_delete("client", client_id, f"la cartella di {c_name} con tutti i suoi rapportini", extra=c_name)
 
 
 # ==========================================
@@ -756,7 +974,7 @@ elif selected_page == "Nuovo Rapportino":
     res_cli = conn.execute("SELECT name, address, phone FROM clients")
     db_clients = res_cli.fetchall()
     
-    res_usr = conn.execute("SELECT name FROM users WHERE role IN ('collaboratore', 'amministratore', 'sviluppatore')")
+    res_usr = conn.execute("SELECT name FROM users WHERE role IN ('collaboratore', 'amministratore')")
     db_users = res_usr.fetchall()
     conn.close()
     
@@ -781,13 +999,13 @@ elif selected_page == "Nuovo Rapportino":
                 default=[user["name"]] if user["name"] in available_technicians else []
             )
             
-            report_type = st.selectbox("Tipo Intervento", ["Ordinario", "Straordinario", "Collaudo", "Guasto"])
+            report_type = st.selectbox("Tipo Intervento", TIPI_INTERVENTO)
             description = st.text_area("Descrizione dettagliata dei lavori eseguiti")
             
             st.markdown("---")
             st.subheader("Spese Vive / Materiali e Foto (Opzionale)")
-            expense_item = st.text_input("Voce Spesa o Materiale")
-            expense_amount = st.number_input("Importo (€)", min_value=0.0, step=0.5)
+            expenses_df = expenses_editor("new_expenses_editor")
+            st.caption("Tocca + in fondo alla tabella per aggiungere altre voci.")
             
             uploaded_photo = st.file_uploader("Aggiungi Foto (Scatta o seleziona dalla galleria)", type=["jpg", "jpeg", "png"])
 
@@ -812,11 +1030,7 @@ elif selected_page == "Nuovo Rapportino":
                         with open(photo_filename, "wb") as f_foto:
                             f_foto.write(uploaded_photo.getbuffer())
 
-                    expenses_json = json.dumps([{
-                        "item": expense_item, 
-                        "amount": expense_amount, 
-                        "photo": photo_filename
-                    }] if (expense_item or uploaded_photo or expense_amount > 0) else [])
+                    expenses_json = build_expenses_json(expenses_df, photo_filename)
                     
                     conn.execute("INSERT INTO reports (number, client, date, duration, technician, type, description, expenses, author) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
                                  (new_number, selected_client_name, report_date, report_duration, technicians_str, report_type, description, expenses_json, user["name"]))
@@ -832,15 +1046,18 @@ elif selected_page == "Nuovo Rapportino":
                         "description": description, "expenses": expenses_json, "author": user["name"]
                     }
                     
-                    st.session_state.last_generated_pdf = generate_pdf(new_rep_dict, client_obj)
+                    st.session_state.last_generated_pdf = (
+                        get_pdf_bytes(new_rep_dict, client_obj),
+                        f"Rapportino_{new_number}.pdf",
+                    )
 
-        if st.session_state.last_generated_pdf and os.path.exists(st.session_state.last_generated_pdf):
+        if isinstance(st.session_state.last_generated_pdf, tuple):
+            pdf_bytes, pdf_name = st.session_state.last_generated_pdf
             st.success("Rapportino salvato con successo!")
-            with open(st.session_state.last_generated_pdf, "rb") as f:
-                st.download_button(
-                    label="📥 Scarica PDF Rapportino Ufficiale", 
-                    data=f, file_name=st.session_state.last_generated_pdf, mime="application/pdf"
-                )
+            st.download_button(
+                label="📥 Scarica PDF Rapportino Ufficiale", 
+                data=pdf_bytes, file_name=pdf_name, mime="application/pdf"
+            )
 
 
 # ==========================================
@@ -850,58 +1067,107 @@ elif selected_page == "Riepilogo Mensile":
     st.title("📊 Riepilogo e Statistiche")
     
     conn = get_db_connection()
-    res_cnt_rep = conn.execute("SELECT COUNT(*) FROM reports")
-    total_reports = res_cnt_rep.fetchone()[0]
-    
     res_cnt_cli = conn.execute("SELECT COUNT(*) FROM clients")
     total_clients = res_cnt_cli.fetchone()[0]
     
     res_all = conn.execute("SELECT number, client, date, duration, technician, type, description, expenses, author FROM reports ORDER BY number DESC")
     all_reports = res_all.fetchall()
+
+    res_cli_all = conn.execute("SELECT name, address, phone FROM clients")
+    clients_info = {c[0]: (c[1], c[2]) for c in res_cli_all.fetchall()}
+    res_dev = conn.execute("SELECT name FROM users WHERE role = 'sviluppatore'")
+    hidden_names = {d[0] for d in res_dev.fetchall()}
     conn.close()
+
+    records = []
+    for rep in all_reports:
+        rep_num, rep_client, rep_date, rep_dur, rep_tech, rep_type, rep_desc, rep_exp, rep_auth = rep
+        records.append({
+            "row": rep, "number": rep_num, "client": rep_client or "", "date": rep_date,
+            "dt": parse_date(rep_date), "tech": rep_tech or "", "type": rep_type or "",
+            "desc": rep_desc or "", "total": expenses_total(rep_exp),
+        })
+
+    today = datetime.today()
+    years = sorted({r["dt"].year for r in records if r["dt"]}, reverse=True)
+    year_options = ["Tutti"] + years
+    month_options = ["Tutti"] + MESI
+    default_year_idx = year_options.index(today.year) if today.year in years else 0
+    default_month_idx = today.month if today.year in years else 0
+
+    col_year, col_month = st.columns(2)
+    with col_year:
+        sel_year = st.selectbox("Anno", year_options, index=default_year_idx)
+    with col_month:
+        sel_month = st.selectbox("Mese", month_options, index=default_month_idx)
+
+    with st.expander("🔎 Altri filtri e ricerca"):
+        all_clients_names = sorted({r["client"] for r in records if r["client"]})
+        all_techs = sorted({t.strip() for r in records for t in r["tech"].split(",") if t.strip() and t.strip() not in hidden_names})
+        col_f1, col_f2, col_f3 = st.columns(3)
+        with col_f1:
+            f_client = st.selectbox("Cliente", ["Tutti"] + all_clients_names)
+        with col_f2:
+            f_tech = st.selectbox("Tecnico", ["Tutti"] + all_techs)
+        with col_f3:
+            f_type = st.selectbox("Tipo intervento", ["Tutti"] + TIPI_INTERVENTO)
+        f_text = st.text_input("🔍 Cerca per numero, cliente o descrizione").strip().lower()
+
+    def matches(r):
+        if sel_year != "Tutti" and (not r["dt"] or r["dt"].year != sel_year):
+            return False
+        if sel_month != "Tutti" and (not r["dt"] or r["dt"].month != MESI.index(sel_month) + 1):
+            return False
+        if f_client != "Tutti" and r["client"] != f_client:
+            return False
+        if f_tech != "Tutti" and f_tech not in [t.strip() for t in r["tech"].split(",")]:
+            return False
+        if f_type != "Tutti" and r["type"] != f_type:
+            return False
+        if f_text and f_text not in str(r["number"]) and f_text not in r["client"].lower() and f_text not in r["desc"].lower():
+            return False
+        return True
+
+    filtered = [r for r in records if matches(r)]
+    period_expenses = sum(r["total"] for r in filtered)
     
-    col1, col2 = st.columns(2)
+    col1, col2, col3 = st.columns(3)
     with col1:
-        st.markdown(f"<div class='card' style='text-align: center;'><h4 style='color: #94a3b8;'>Totale Rapportini</h4><h2>{total_reports}</h2></div>", unsafe_allow_html=True)
+        st.markdown(f"<div class='card' style='text-align: center;'><h4 style='color: #94a3b8;'>Rapportini</h4><h2>{len(filtered)}</h2></div>", unsafe_allow_html=True)
     with col2:
+        st.markdown(f"<div class='card' style='text-align: center;'><h4 style='color: #94a3b8;'>Spese Totali</h4><h2>€ {period_expenses:.2f}</h2></div>", unsafe_allow_html=True)
+    with col3:
         st.markdown(f"<div class='card' style='text-align: center;'><h4 style='color: #94a3b8;'>Clienti in Archivio</h4><h2>{total_clients}</h2></div>", unsafe_allow_html=True)
     
-    st.markdown("### 📋 Elenco Completo Rapportini")
+    st.markdown("### 📋 Elenco Rapportini")
     
-    if not all_reports:
-        st.info("Nessun rapportino registrato.")
+    if not filtered:
+        st.info("Nessun rapportino trovato con i filtri selezionati.")
     else:
-        for rep in all_reports:
-            rep_num, rep_client, rep_date, rep_dur, rep_tech, rep_type, rep_desc, rep_exp, rep_auth = rep
+        lazy_mode = len(filtered) > 10
+        for r in filtered:
+            rep_num, rep_client, rep_date, rep_dur, rep_tech, rep_type, rep_desc, rep_exp, rep_auth = r["row"]
             
             with st.expander(f"📄 Rapportino N. {rep_num} — Cliente: {rep_client} ({rep_date})"):
-                st.markdown(f"""
-                    * **Tipo Intervento:** {rep_type}
-                    * **Durata Servizio:** {rep_dur if rep_dur else 'Non inserita'}
-                    * **Tecnici Incaricati:** {rep_tech}
-                    * **Compilato da:** {rep_auth}
-                    * **Descrizione Lavori:** {rep_desc}
-                """)
+                lines = [
+                    f"* **Tipo Intervento:** {rep_type}",
+                    f"* **Durata Servizio:** {rep_dur if rep_dur else 'Non inserita'}",
+                    f"* **Tecnici Incaricati:** {rep_tech}",
+                    f"* **Compilato da:** {rep_auth}",
+                    f"* **Descrizione Lavori:** {rep_desc}",
+                ]
+                if r["total"] > 0:
+                    lines.append(f"* **Spese:** € {r['total']:.2f}")
+                st.markdown("\n".join(lines))
                 
-                conn = get_db_connection()
-                res_cli_info = conn.execute("SELECT address, phone FROM clients WHERE name = ?", (rep_client,))
-                cli_res = res_cli_info.fetchone()
-                conn.close()
-                
-                cli_obj = {"name": rep_client, "address": cli_res[0] if cli_res else "", "phone": cli_res[1] if cli_res else ""}
+                addr, phone = clients_info.get(rep_client, ("", ""))
+                cli_obj = {"name": rep_client, "address": addr or "", "phone": phone or ""}
                 rep_obj = {
                     "number": rep_num, "client": rep_client, "date": rep_date, "duration": rep_dur,
                     "technician": rep_tech, "type": rep_type, "description": rep_desc, "expenses": rep_exp, "author": rep_auth
                 }
                 
-                pdf_file_path = generate_pdf(rep_obj, cli_obj)
-                
-                with open(pdf_file_path, "rb") as f:
-                    st.download_button(
-                        label=f"📥 Scarica PDF N. {rep_num}",
-                        data=f, file_name=pdf_file_path, mime="application/pdf",
-                        key=f"dl_sum_{rep_num}"
-                    )
+                pdf_download(rep_obj, cli_obj, f"sum_{rep_num}", f"📥 Scarica PDF N. {rep_num}", lazy=lazy_mode)
 
 
 # ==========================================
@@ -917,7 +1183,7 @@ elif selected_page == "Modifica Rapportino":
         res_list = conn.execute("SELECT number, client, date FROM reports ORDER BY number DESC")
         reports_list = res_list.fetchall()
         
-        res_techs = conn.execute("SELECT name FROM users WHERE role IN ('collaboratore', 'amministratore', 'sviluppatore')")
+        res_techs = conn.execute("SELECT name FROM users WHERE role IN ('collaboratore', 'amministratore')")
         tech_res = res_techs.fetchall()
         conn.close()
         
@@ -950,17 +1216,7 @@ elif selected_page == "Modifica Rapportino":
                 c_name, c_date, c_dur, c_tech, c_type, c_desc, c_exp, c_auth = rep_data
                 client_names = [c[0] for c in db_clients]
                 
-                # Gestione spese esistenti nel JSON
-                existing_expenses = []
-                try:
-                    if c_exp:
-                        existing_expenses = json.loads(c_exp)
-                except Exception:
-                    existing_expenses = []
-                
-                ex_item_val = existing_expenses[0].get("item", "") if existing_expenses else ""
-                ex_amt_val = existing_expenses[0].get("amount", 0.0) if existing_expenses else 0.0
-                ex_photo_val = existing_expenses[0].get("photo", None) if existing_expenses else None
+                ex_photo_val = existing_photo(c_exp)
 
                 with st.form("edit_report_form"):
                     st.subheader(f"Modifica Completa Rapportino N. {target_rep_num}")
@@ -974,16 +1230,15 @@ elif selected_page == "Modifica Rapportino":
                     
                     new_technicians = st.multiselect("Tecnici Incaricati", options=available_technicians, default=default_techs)
                     
-                    types_list = ["Ordinario", "Straordinario", "Collaudo", "Guasto"]
-                    type_idx = types_list.index(c_type) if c_type in types_list else 0
-                    new_type = st.selectbox("Tipo Intervento", types_list, index=type_idx)
+                    type_idx = TIPI_INTERVENTO.index(c_type) if c_type in TIPI_INTERVENTO else 0
+                    new_type = st.selectbox("Tipo Intervento", TIPI_INTERVENTO, index=type_idx)
                     
                     new_desc = st.text_area("Descrizione dei Lavori Eseguiti", value=c_desc)
                     
                     st.markdown("---")
-                    st.subheader("Gestione Spesa / Materiale e Foto")
-                    new_expense_item = st.text_input("Voce Spesa o Materiale", value=ex_item_val)
-                    new_expense_amount = st.number_input("Importo (€)", min_value=0.0, step=0.5, value=float(ex_amt_val))
+                    st.subheader("Gestione Spese / Materiali e Foto")
+                    new_expenses_df = expenses_editor(f"edit_expenses_editor_{target_rep_num}", c_exp)
+                    st.caption("Tocca + in fondo alla tabella per aggiungere altre voci.")
                     
                     new_uploaded_photo = st.file_uploader("Sostituisci o Aggiungi Foto", type=["jpg", "jpeg", "png"])
                     
@@ -1003,11 +1258,7 @@ elif selected_page == "Modifica Rapportino":
                                 with open(photo_filename, "wb") as f_foto:
                                     f_foto.write(new_uploaded_photo.getbuffer())
 
-                            expenses_json = json.dumps([{
-                                "item": new_expense_item, 
-                                "amount": new_expense_amount, 
-                                "photo": photo_filename
-                            }] if (new_expense_item or new_uploaded_photo or new_expense_amount > 0) else [])
+                            expenses_json = build_expenses_json(new_expenses_df, photo_filename)
 
                             conn = get_db_connection()
                             conn.execute("""
@@ -1023,10 +1274,7 @@ elif selected_page == "Modifica Rapportino":
 
                 st.markdown("---")
                 if st.button(f"🗑️ Elimina Definitivamente il Rapportino N. {target_rep_num}", key=f"del_single_from_edit_{target_rep_num}"):
-                    delete_single_report(target_rep_num)
-                    st.session_state.edit_report_num = None
-                    st.success(f"Rapportino N. {target_rep_num} eliminato con successo!")
-                    st.rerun()
+                    confirm_delete("report", target_rep_num, f"il rapportino N. {target_rep_num}")
 
 
 # ==========================================
@@ -1050,35 +1298,56 @@ elif selected_page == "Gestione Utenti":
                 new_role = st.selectbox("Ruolo", ["collaboratore", "amministratore"])
             
             if st.form_submit_button("Crea Utente") and new_username and new_pin:
+                new_username = new_username.strip()
                 conn = get_db_connection()
-                pin_hash = hashlib.sha256(new_pin.encode()).hexdigest()
-                conn.execute("INSERT OR REPLACE INTO users (username, name, pin, raw_pin, role) VALUES (?, ?, ?, ?, ?)",
-                             (new_username, new_name, pin_hash, new_pin, new_role))
-                conn.commit()
-                conn.close()
-                st.success("Utente creato con successo!")
-                st.rerun()
+                already = conn.execute("SELECT 1 FROM users WHERE username = ?", (new_username,)).fetchone()
+                if already:
+                    conn.close()
+                    st.error("Esiste già un utente con questo nome. Per cambiare la password usa «Reimposta password» nell'elenco qui sotto.")
+                elif len(new_pin) < MIN_PASSWORD_LEN:
+                    conn.close()
+                    st.error(f"La password deve avere almeno {MIN_PASSWORD_LEN} caratteri.")
+                else:
+                    pin_hash = hashlib.sha256(new_pin.encode()).hexdigest()
+                    conn.execute("INSERT INTO users (username, name, pin, raw_pin, role) VALUES (?, ?, ?, ?, ?)",
+                                 (new_username, new_name, pin_hash, "", new_role))
+                    conn.commit()
+                    conn.close()
+                    st.session_state.flash = "Utente creato con successo!"
+                    st.rerun()
 
         st.markdown("---")
         st.subheader("📋 Elenco Utenti Registrati")
 
         conn = get_db_connection()
-        res_usr_list = conn.execute("SELECT username, name, raw_pin, role FROM users")
+        res_usr_list = conn.execute("SELECT username, name, role FROM users")
         db_users = res_usr_list.fetchall()
         conn.close()
         
-        for uname, u_name, u_raw_pin, u_role in db_users:
+        for uname, u_name, u_role in db_users:
             if user["role"] == "amministratore" and u_role == "sviluppatore":
                 continue
 
             col_info, col_del = st.columns([4, 1])
             with col_info:
-                st.markdown(f"<b>{u_name}</b> (Username: <code>{uname}</code>) - Password: <code>{u_raw_pin}</code> - Ruolo: <em>{u_role}</em>", unsafe_allow_html=True)
+                st.markdown(f"<b>{u_name}</b> (Username: <code>{uname}</code>) - Ruolo: <em>{u_role}</em>", unsafe_allow_html=True)
             with col_del:
                 if uname not in ["DEV", "Salvatore", "Pietro"] and u_role != "sviluppatore":
                     if st.button("🗑️ Elimina", key=f"del_u_{uname}"):
-                        conn = get_db_connection()
-                        conn.execute("DELETE FROM users WHERE username = ?", (uname,))
-                        conn.commit()
-                        conn.close()
-                        st.rerun()
+                        confirm_delete("user", uname, f"l'utente {u_name}")
+
+            with st.expander(f"🔑 Reimposta password di {u_name}"):
+                with st.form(f"reset_form_{uname}"):
+                    reset_pw = st.text_input("Nuova password", type="password", key=f"reset_pw_{uname}")
+                    if st.form_submit_button("Salva nuova password"):
+                        if len(reset_pw) < MIN_PASSWORD_LEN:
+                            st.error(f"La password deve avere almeno {MIN_PASSWORD_LEN} caratteri.")
+                        else:
+                            conn = get_db_connection()
+                            conn.execute("UPDATE users SET pin = ?, raw_pin = '' WHERE username = ?",
+                                         (hashlib.sha256(reset_pw.encode()).hexdigest(), uname))
+                            conn.execute("DELETE FROM sessions WHERE username = ?", (uname,))
+                            conn.commit()
+                            conn.close()
+                            st.session_state.flash = f"Password di {u_name} aggiornata."
+                            st.rerun()
